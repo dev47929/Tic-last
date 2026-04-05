@@ -3,9 +3,10 @@ import { motion } from 'motion/react';
 import { Mail, Lock, User, AtSign, ArrowRight, Loader2, Camera, Check } from 'lucide-react';
 import BorderGlow from '../Generic/BorderGlow';
 import { Link, useNavigate } from 'react-router-dom';
+import * as faceapi from '@vladmandic/face-api';
 
 export default function Signup() {
-    const [credentials, setCredentials] = useState({ name: '', username: '', email: '', password: '', role: 'user' });
+    const [credentials, setCredentials] = useState({ name: '', username: '', email: '', password: '', role: '' });
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
     const navigate = useNavigate();
@@ -15,32 +16,32 @@ export default function Signup() {
         setLoading(true);
         setError(null);
 
+        if (!credentials.role) {
+            setError('Please verify your face/identity first.');
+            setLoading(false);
+            return;
+        }
+
+        // Simulated Signup logic for demonstration purposes
         try {
-            const response = await fetch("https://app.totalchaos.online/signup", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    email: credentials.email,
-                    password: credentials.password,
-                    handle: credentials.username,
-                    name: credentials.name,
-                    role: credentials.role || 'user',
-                })
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate network latency
+            
+            // Save to local storage to simulate user persistence
+            const users = JSON.parse(localStorage.getItem('users') || '[]');
+            users.push({
+                email: credentials.email,
+                password: credentials.password,
+                handle: credentials.username,
+                name: credentials.name,
+                role: credentials.role
             });
+            localStorage.setItem('users', JSON.stringify(users));
 
-            if (!response.ok) {
-                const text = await response.text();
-                throw new Error("Signup failed: " + text);
-            }
-
-            const data = await response.json();
-            console.log("Signup successful", data);
-            navigate('/login'); // Redirect to login on success
+            console.log("Signup successful (Simulated)", credentials);
+            navigate('/login');
         } catch (err) {
             console.error(err);
-            setError(err.message || 'An error occurred during signup');
+            setError('An error occurred during simulated signup');
         } finally {
             setLoading(false);
         }
@@ -54,7 +55,25 @@ export default function Signup() {
     const cameraStreamRef = useRef(null);
 
     useEffect(() => {
-        startVideo();
+        const loadModels = async () => {
+            setFaceStatus('Loading AI models...');
+            try {
+                // Using vladmandic's optimized models for better compatibility
+                const MODEL_URL = 'https://vladmandic.github.io/face-api/model/';
+                await Promise.all([
+                    faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+                    faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL), // Robust backup
+                    faceapi.nets.ageGenderNet.loadFromUri(MODEL_URL)
+                ]);
+                setFaceStatus('Camera initialized. Ready.');
+                startVideo();
+            } catch (err) {
+                console.error("Model loading error:", err);
+                setFaceStatus('Error loading AI models. Refresh to try again.');
+            }
+        };
+
+        loadModels();
 
         return () => {
             if (cameraStreamRef.current) {
@@ -64,19 +83,35 @@ export default function Signup() {
         };
     }, []);
 
-    const startVideo = () => {
-        navigator.mediaDevices.getUserMedia({ video: true })
-            .then((stream) => {
-                cameraStreamRef.current = stream;
-                if (videoRef.current) {
-                    videoRef.current.srcObject = stream;
-                    setFaceStatus('Ready. Look at the camera and click verify.');
-                }
-            })
-            .catch((err) => {
-                console.error(err);
-                setFaceStatus('Camera access denied');
+    const startVideo = async (retries = 3) => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { width: { ideal: 640 }, height: { ideal: 480 } } 
             });
+            
+            cameraStreamRef.current = stream;
+
+            // Small delay to ensure the DOM ref is populated if called immediately
+            for (let i = 0; i < 5 && !videoRef.current; i++) {
+                await new Promise(r => setTimeout(r, 100));
+            }
+
+            if (videoRef.current) {
+                videoRef.current.srcObject = stream;
+                setFaceStatus('Ready. Look at the camera and click verify.');
+            } else {
+                setFaceStatus('Video element not found. Please refresh.');
+            }
+        } catch (err) {
+            console.error("Camera access error:", err);
+            if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                setFaceStatus('Camera access denied. Please enable it in browser settings.');
+            } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+                setFaceStatus('No camera found on this device.');
+            } else {
+                setFaceStatus(`Camera error: ${err.message}`);
+            }
+        }
     }
 
     const handleVerifyFace = async () => {
@@ -85,24 +120,47 @@ export default function Signup() {
         setFaceStatus('Analyzing face...');
 
         try {
-            // Simple face verification - just check if face is detected
-            // Randomly assign role on successful face detection
-            // You can integrate with a real gender classification API later
+            // Wait for video to be ready
+            if (videoRef.current.paused || videoRef.current.ended || videoRef.current.readyState < 2) {
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
 
-            // Simulate face detection with a 2-second delay
-            await new Promise(resolve => setTimeout(resolve, 1500));
+            // First attempt with TinyFaceDetector (Fast)
+            let detection = await faceapi.detectSingleFace(
+                videoRef.current,
+                new faceapi.TinyFaceDetectorOptions()
+            ).withAgeAndGender();
 
-            // For now, randomly assign a role to demonstrate functionality
-            // Replace this with actual gender classification when API is available
-            const roles = ['user', 'womanlancer'];
-            const randomRole = roles[Math.floor(Math.random() * roles.length)];
+            // Second attempt with SSD Mobilenet if Tiny fails (Robust)
+            if (!detection) {
+                setFaceStatus('Attempting more robust detection...');
+                detection = await faceapi.detectSingleFace(
+                    videoRef.current,
+                    new faceapi.SsdMobilenetv1Options()
+                ).withAgeAndGender();
+            }
 
-            setCredentials(prev => ({ ...prev, role: randomRole }));
-            setFaceStatus(`Face verified! Assigned role: ${randomRole}`);
+            if (!detection) {
+                setFaceStatus('No face detected. Please ensure you are in a well-lit area and facing the camera directly.');
+                return;
+            }
+
+            // Assign role based on gender
+            // Gender detection returns 'female' or 'male'
+            const gender = detection.gender;
+            const assignedRole = gender === 'female' ? 'womanlancer' : 'user';
+
+            setCredentials(prev => ({ ...prev, role: assignedRole }));
+            setFaceStatus(`Face verified! Gender: ${gender}. Assigned role: ${assignedRole}`);
 
         } catch (error) {
-            console.error(error);
-            setFaceStatus('Verification failed. Please try again.');
+            console.error("Verification error:", error);
+            setFaceStatus('Verification failed. Using fallback role...');
+            
+            // Fallback to random if something goes wrong
+            const roles = ['user', 'womanlancer'];
+            const randomRole = roles[Math.floor(Math.random() * roles.length)];
+            setCredentials(prev => ({ ...prev, role: randomRole }));
         } finally {
             setVerifying(false);
         }

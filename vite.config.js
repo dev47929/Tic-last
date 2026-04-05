@@ -15,6 +15,10 @@ export default defineConfig({
         __dirname,
         'src/shims/tfjsWebgpuShim.js'
       ),
+      '@tensorflow/tfjs': path.resolve(
+        __dirname,
+        'node_modules/@tensorflow/tfjs/dist/tf.js'
+      ),
     },
   },
   plugins: [react(), tailwindcss()],

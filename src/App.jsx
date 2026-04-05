@@ -11,7 +11,7 @@ import { AuthProvider } from './context/AuthContext'
 function App() {
   return (
     <AuthProvider>
-      <Router>
+      <Router basename="/CODESENA">
         <Routes>
           <Route path="/" element={<Landing />} />
           <Route path="/login" element={<Login />} />
